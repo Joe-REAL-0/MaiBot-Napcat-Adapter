@@ -21,28 +21,41 @@ async def message_recv(server_connection: Server.ServerConnection):
     asyncio.create_task(notice_handler.set_server_connection(server_connection))
     await nc_message_sender.set_server_connection(server_connection)
     async for raw_message in server_connection:
-        logger.debug(f"{raw_message[:1500]}..." if (len(raw_message) > 1500) else raw_message)
-        decoded_raw_message: dict = json.loads(raw_message)
-        post_type = decoded_raw_message.get("post_type")
-        if post_type in ["meta_event", "message", "notice"]:
-            await message_queue.put(decoded_raw_message)
-        elif post_type is None:
-            await put_response(decoded_raw_message)
+        try:
+            logger.debug(f"{raw_message[:1500]}..." if (len(raw_message) > 1500) else raw_message)
+            decoded_raw_message: dict = json.loads(raw_message)
+        except Exception as e:
+            logger.error(f"JSON解析失败: {e}")
+            continue
+        try:
+            post_type = decoded_raw_message.get("post_type")
+            if post_type in ["meta_event", "message", "notice"]:
+                await message_queue.put(decoded_raw_message)
+            elif post_type is None:
+                await put_response(decoded_raw_message)
+            else:
+                logger.warning(f"未知的post_type: {post_type}")
+        except Exception as e:
+            logger.exception(f"消息入队或响应处理异常: {e}")
 
 
 async def message_process():
     while True:
         message = await message_queue.get()
-        post_type = message.get("post_type")
-        if post_type == "message":
-            await message_handler.handle_raw_message(message)
-        elif post_type == "meta_event":
-            await meta_event_handler.handle_meta_event(message)
-        elif post_type == "notice":
-            await notice_handler.handle_notice(message)
-        else:
-            logger.warning(f"未知的post_type: {post_type}")
-        message_queue.task_done()
+        try:
+            post_type = message.get("post_type")
+            if post_type == "message":
+                await message_handler.handle_raw_message(message)
+            elif post_type == "meta_event":
+                await meta_event_handler.handle_meta_event(message)
+            elif post_type == "notice":
+                await notice_handler.handle_notice(message)
+            else:
+                logger.warning(f"未知的post_type: {post_type}")
+        except Exception as e:
+            logger.exception(f"消息处理异常: {e}")
+        finally:
+            message_queue.task_done()
         await asyncio.sleep(0.05)
 
 
@@ -96,6 +109,11 @@ if __name__ == "__main__":
         loop.run_until_complete(graceful_shutdown())
     except Exception as e:
         logger.exception(f"主程序异常: {str(e)}")
+        # 尝试优雅关闭，取消仍在运行的任务，避免残留pending任务和未关闭的会话
+        try:
+            loop.run_until_complete(graceful_shutdown())
+        except Exception as ge:
+            logger.error(f"优雅关闭过程中出现错误: {ge}")
         sys.exit(1)
     finally:
         if loop and not loop.is_closed():

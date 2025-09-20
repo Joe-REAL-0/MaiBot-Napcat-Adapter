@@ -10,7 +10,7 @@ response_time_dict: Dict = {}
 
 async def get_response(request_id: str, timeout: int = 10) -> dict:
     response = await asyncio.wait_for(_get_response(request_id), timeout)
-    _ = response_time_dict.pop(request_id)
+    _ = response_time_dict.pop(request_id, None)
     logger.trace(f"响应信息id: {request_id} 已从响应字典中取出")
     return response
 
@@ -24,6 +24,10 @@ async def _get_response(request_id: str) -> dict:
 
 async def put_response(response: dict):
     echo_id = response.get("echo")
+    if echo_id is None:
+        # 没有echo无法匹配请求，跳过但记录日志
+        logger.warning("收到缺少 echo 字段的响应，已忽略")
+        return
     now_time = time.time()
     response_dict[echo_id] = response
     response_time_dict[echo_id] = now_time
@@ -37,8 +41,8 @@ async def check_timeout_response() -> None:
         for echo_id, response_time in list(response_time_dict.items()):
             if now_time - response_time > global_config.napcat_server.heartbeat_interval:
                 cleaned_message_count += 1
-                response_dict.pop(echo_id)
-                response_time_dict.pop(echo_id)
+                response_dict.pop(echo_id, None)
+                response_time_dict.pop(echo_id, None)
                 logger.warning(f"响应消息 {echo_id} 超时，已删除")
         logger.info(f"已删除 {cleaned_message_count} 条超时响应消息")
         await asyncio.sleep(global_config.napcat_server.heartbeat_interval)

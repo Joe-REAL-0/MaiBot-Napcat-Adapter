@@ -259,7 +259,8 @@ class MessageHandler:
         additional_config: dict = {}
         real_message: list = raw_message.get("message")
         if not real_message:
-            return None
+            # 保证返回类型一致，避免上层解包异常
+            return None, additional_config
         seg_message: List[Seg] = []
         for sub_message in real_message:
             sub_message: dict
@@ -323,7 +324,8 @@ class MessageHandler:
                     messages = await self._get_forward_message(sub_message)
                     if not messages:
                         logger.warning("转发消息内容为空或获取失败")
-                        return None
+                        # 保持返回结构，避免上层解包失败
+                        return None, additional_config
                     ret_seg = await self.handle_forward_message(messages)
                     if ret_seg:
                         seg_message.append(ret_seg)
@@ -455,15 +457,17 @@ class MessageHandler:
         if raw_message_data:
             message_id = raw_message_data.get("id")
         else:
-            return None
+            # 保证调用方解包安全
+            return None, additional_config
         additional_config["reply_message_id"] = message_id
         message_detail: dict = await get_message_detail(self.server_connection, message_id)
         if not message_detail:
             logger.warning("获取被引用的消息详情失败")
-            return None
+            return None, additional_config
         reply_message, _ = await self.handle_real_message(message_detail, in_reply=True)
         if reply_message is None:
-            reply_message = "(获取发言内容失败)"
+            # 统一为Seg列表，避免字符串被当作可迭代对象逐字符相加
+            reply_message = [Seg(type="text", data="(获取发言内容失败)")]
         sender_info: dict = message_detail.get("sender")
         sender_nickname: str = sender_info.get("nickname")
         sender_id: str = sender_info.get("user_id")
